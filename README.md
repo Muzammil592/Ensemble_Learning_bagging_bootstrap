@@ -1,7 +1,7 @@
 # Bootstrap Ensembles from Scratch
 
 Building bagging and random forests from scratch with NumPy, then studying *why*
-bootstrapping reduces variance. This is a 5-day project; progress is tracked below.
+bootstrapping reduces variance.
 
 ## Project structure
 
