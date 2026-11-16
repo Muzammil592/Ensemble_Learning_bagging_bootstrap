@@ -6,6 +6,7 @@ from .bootstrap import (
     simulate_unique_fraction,
 )
 from .variance_demo import tree_variance_experiment, prediction_variance_per_point
+from .bagging import BaggingClassifier, BaggingRegressor
 
 __all__ = [
     "bootstrap_indices",
@@ -15,4 +16,6 @@ __all__ = [
     "simulate_unique_fraction",
     "tree_variance_experiment",
     "prediction_variance_per_point",
+    "BaggingClassifier",
+    "BaggingRegressor",
 ]
