@@ -5,16 +5,22 @@ Outputs figures to results/.
 
 Sections 1-3: bootstrap fundamentals and single-tree variance.
 Sections 4-7: bagging from scratch, OOB error, error curves, regression.
+Sections 8-12: random forest, bias-variance decomposition, max_features sweep,
+               bagging vs random forest error curves, OOB vs test, feature importance.
 """
 from pathlib import Path
 
 import numpy as np
 from sklearn.ensemble import BaggingClassifier as SkBaggingClassifier
+from sklearn.ensemble import RandomForestClassifier as SkRandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from src import (
     BaggingClassifier,
     BaggingRegressor,
+    RandomForestClassifier,
+    RandomForestRegressor,
+    bias_variance_decomposition,
     bootstrap_sample,
     oob_indices,
     unique_fraction,
@@ -31,6 +37,11 @@ from utils import (
     plot_error_vs_estimators,
     plot_oob_vs_test,
     plot_model_comparison,
+    plot_grouped_bars,
+    plot_bias_variance,
+    plot_max_features_sweep,
+    plot_error_curves,
+    plot_feature_importance,
 )
 
 SEED = 42
@@ -132,9 +143,103 @@ def main():
     print(f"  Bagging R^2:      {reg.score(Xr_te, yr_te):.3f}")
     print(f"  Bagging OOB R^2:  {reg.oob_score_:.3f}  (OOB MSE = {reg.oob_mse_:.1f})")
 
+    # ------------------------------------------------------------------
+    # Day 3: Random forest + bias-variance analysis
+    # ------------------------------------------------------------------
+    section("8. Single tree vs bagging vs random forest (20 splits, 100 trees)")
+    datasets = ["breast_cancer", "wine"]
+    model_names = ["Single tree", "Bagging (ours)", "Random forest (ours)", "Random forest (sklearn)"]
+    table = {n: ([], []) for n in model_names}
+    for ds in datasets:
+        Xd, yd, _ = load_dataset(ds)
+        res = {n: [] for n in model_names}
+        for sd in range(20):
+            Xtr, Xte, ytr, yte = train_test_split_np(Xd, yd, test_size=0.3, seed=sd)
+            res["Single tree"].append(DecisionTreeClassifier(random_state=sd).fit(Xtr, ytr).score(Xte, yte))
+            res["Bagging (ours)"].append(BaggingClassifier(n_estimators=100, voting="soft", random_state=sd).fit(Xtr, ytr).score(Xte, yte))
+            res["Random forest (ours)"].append(RandomForestClassifier(n_estimators=100, random_state=sd).fit(Xtr, ytr).score(Xte, yte))
+            res["Random forest (sklearn)"].append(SkRandomForestClassifier(n_estimators=100, random_state=sd).fit(Xtr, ytr).score(Xte, yte))
+        print(f"  [{ds}]")
+        for n in model_names:
+            table[n][0].append(np.mean(res[n]))
+            table[n][1].append(np.std(res[n]))
+            print(f"    {n:<25s} {np.mean(res[n]):.4f} +/- {np.std(res[n]):.4f}")
+    plot_grouped_bars(["Breast Cancer", "Wine"], table, RESULTS / "rf_comparison.png",
+                      title="Test accuracy over 20 random splits (100 trees)")
+
+    section("9. Bias-variance decomposition (Friedman #1, 100 training sets)")
+    BV = dict(n_rounds=100, n_train=200, n_test=500, noise=1.0, seed=SEED)
+    models = {
+        "Single tree": lambda s_: DecisionTreeRegressor(random_state=s_),
+        "Bagging": lambda s_: BaggingRegressor(n_estimators=50, random_state=s_),
+        "Random forest": lambda s_: RandomForestRegressor(n_estimators=50, max_features=3, random_state=s_),
+    }
+    bv = {name: bias_variance_decomposition(f, **BV) for name, f in models.items()}
+    print(f"  {'Model':<15s} {'Bias^2':>8s} {'Variance':>9s} {'Bias^2+Var':>11s}")
+    for name, r in bv.items():
+        print(f"  {name:<15s} {r['bias2']:>8.3f} {r['variance']:>9.3f} {r['mse_vs_truth']:>11.3f}")
+    print(f"  Irreducible noise (sigma^2): {BV['noise'] ** 2:.1f}")
+    plot_bias_variance(list(bv), [r["bias2"] for r in bv.values()],
+                       [r["variance"] for r in bv.values()], BV["noise"] ** 2,
+                       RESULTS / "bias_variance.png")
+
+    section("10. Random forest: sweeping max_features (10 features total)")
+    mf_values = [1, 2, 3, 5, 7, 10]
+    sweep = []
+    for mf in mf_values:
+        r = bias_variance_decomposition(
+            lambda s_, mf=mf: RandomForestRegressor(n_estimators=50, max_features=mf, random_state=s_), **BV)
+        sweep.append(r)
+        print(f"  max_features={mf:<2d} bias^2={r['bias2']:.3f} variance={r['variance']:.3f} total={r['mse_vs_truth']:.3f}")
+    plot_max_features_sweep(mf_values, [r["bias2"] for r in sweep],
+                            [r["variance"] for r in sweep], RESULTS / "max_features_sweep.png")
+
+    section("11. Error vs number of trees: bagging vs random forest (10 splits)")
+    K, n_rep = 200, 10
+    bag_test, rf_test, bag_oob, rf_oob = [], [], [], []
+    for sd in range(n_rep):
+        Xtr, Xte, ytr, yte = train_test_split_np(X, y, test_size=0.3, seed=sd)
+        bag = BaggingClassifier(n_estimators=K, voting="soft", oob_score=True, random_state=sd).fit(Xtr, ytr)
+        rf = RandomForestClassifier(n_estimators=K, oob_score=True, random_state=sd).fit(Xtr, ytr)
+        bag_test.append([float((p != yte).mean()) for p in bag.staged_predict(Xte)])
+        rf_test.append([float((p != yte).mean()) for p in rf.staged_predict(Xte)])
+        bag_oob.append(bag.oob_error_curve_)
+        rf_oob.append(rf.oob_error_curve_)
+    bag_test, rf_test, bag_oob, rf_oob = map(np.array, (bag_test, rf_test, bag_oob, rf_oob))
+    ks = np.arange(1, K + 1)
+    for k in (1, 5, 10, 25, 50, 100, 200):
+        print(f"  {k:>3d} trees: bagging test err = {bag_test[:, k - 1].mean():.4f} | "
+              f"RF test err = {rf_test[:, k - 1].mean():.4f}")
+    diff = bag_test[:, -1] - rf_test[:, -1]      # paired: same split, same test set
+    print(f"  Paired difference at {K} trees (bagging - RF): mean = {diff.mean():+.4f}, "
+          f"RF better/equal in {(diff >= 0).sum()}/{n_rep} splits")
+    plot_error_curves(ks, [
+        dict(label="Bagging", mean=bag_test.mean(0), std=bag_test.std(0), color="#d9534f"),
+        dict(label="Random forest", mean=rf_test.mean(0), std=rf_test.std(0), color="#4a90d9"),
+    ], RESULTS / "bagging_vs_rf_curve.png",
+        title="Test error vs number of trees (mean +/- std over 10 splits)")
+
+    section("12. OOB error vs test error, and feature importance")
+    print(f"  Bagging  | test err = {bag_test[:, -1].mean():.4f} | OOB err = {bag_oob[:, -1].mean():.4f}")
+    print(f"  RF       | test err = {rf_test[:, -1].mean():.4f} | OOB err = {rf_oob[:, -1].mean():.4f}")
+    print(f"  Mean |OOB - test| at {K} trees: bagging = {np.abs(bag_oob[:, -1] - bag_test[:, -1]).mean():.4f}, "
+          f"RF = {np.abs(rf_oob[:, -1] - rf_test[:, -1]).mean():.4f}")
+    plot_error_curves(ks, [
+        dict(label="RF OOB error", mean=rf_oob.mean(0), std=rf_oob.std(0), color="#e08e0b"),
+        dict(label="RF test error", mean=rf_test.mean(0), std=rf_test.std(0), color="#4a90d9"),
+    ], RESULTS / "rf_oob_vs_test_curve.png",
+        title="Random forest: OOB error vs test error (mean +/- std over 10 splits)")
+
+    _, _, feat_names = load_dataset("breast_cancer")
+    rf_full = RandomForestClassifier(n_estimators=300, random_state=SEED).fit(X_train, y_train)
+    imp = rf_full.feature_importances_
+    top = np.argsort(imp)[::-1][:5]
+    print("  Top 5 features: " + ", ".join(f"{feat_names[i]} ({imp[i]:.3f})" for i in top))
+    plot_feature_importance(feat_names, imp, RESULTS / "feature_importance.png")
+
     section("Done")
     print(f"Figures saved in: {RESULTS}/")
-    print("Next (Day 3): random feature subsetting -> Random Forest + bias-variance analysis.")
+    print("Next (Day 4): bootstrap confidence intervals + benchmarks.")
 
 
 if __name__ == "__main__":

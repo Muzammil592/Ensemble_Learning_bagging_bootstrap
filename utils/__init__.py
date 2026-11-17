@@ -6,6 +6,11 @@ from .plotting import (
     plot_error_vs_estimators,
     plot_oob_vs_test,
     plot_model_comparison,
+    plot_grouped_bars,
+    plot_bias_variance,
+    plot_max_features_sweep,
+    plot_error_curves,
+    plot_feature_importance,
 )
 
 __all__ = [
@@ -17,4 +22,9 @@ __all__ = [
     "plot_error_vs_estimators",
     "plot_oob_vs_test",
     "plot_model_comparison",
+    "plot_grouped_bars",
+    "plot_bias_variance",
+    "plot_max_features_sweep",
+    "plot_error_curves",
+    "plot_feature_importance",
 ]
