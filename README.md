@@ -1,15 +1,15 @@
 # Bootstrap Ensembles from Scratch
 
 Building bagging and random forests from scratch with NumPy, then studying *why*
-bootstrapping reduces variance.
+bootstrapping reduces variance. The project is built in three stages; progress is tracked below.
 
 ## Project structure
 
 ```
 bootstrap-ensembles/
 ├── main.py            # entry point: python main.py
-├── data/              # CSV datasets (breast_cancer, wine, diabetes)
-├── src/               # core algorithms (bootstrap, bagging, random forest, bias-variance)
+├── data/              # CSV datasets (iris, wine, breast_cancer, digits, diabetes, friedman1)
+├── src/               # bootstrap, bagging, random forest, bias-variance, CIs, intervals
 ├── utils/             # data loading and plotting helpers
 ├── tests/             # pytest unit tests
 ├── results/           # generated figures
@@ -26,10 +26,14 @@ pytest -q             # runs the unit tests
 
 ## Progress
 
-- **Initial Working:** Bootstrap fundamentals and the variance problem
-- **Previous Working:** Bagging from scratch + out-of-bag error
-- **Latest Working:** Random forest + bias-variance analysis
-## Initial key findings
+- [x] **Initial stage:** bootstrap fundamentals, bagging from scratch and out-of-bag error
+- [x] **Intermediary stage:** random forest and bias-variance analysis
+- [x] **Final stage:** bootstrap confidence intervals, prediction intervals and benchmarks
+- [ ] Planned: polish, CI workflow and final write-up
+
+## Initial stage: key findings
+
+### Bootstrap fundamentals
 
 **1. A bootstrap sample contains ~63.2% of the original points.**
 Each point is missed with probability (1 - 1/n)^n -> 1/e ≈ 0.368. Simulations
@@ -45,7 +49,7 @@ set had test accuracy from **0.877 to 0.971** (std 0.019), and disagreed on
 
 ![tree variance](results/tree_variance.png)
 
-## Intermediary key findings
+### Bagging from scratch
 
 I implemented `BaggingClassifier` and `BaggingRegressor` in `src/bagging.py`. Only the base
 tree comes from scikit-learn; resampling, hard/soft voting, averaging, OOB estimation and
@@ -83,7 +87,7 @@ single split is noisy; the 20-split average above is the fair comparison.
 A single tree overfits badly (test R² = -0.383); bagging reaches R² = 0.386, with OOB R² = 0.475.
 The OOB estimate is optimistic here, so on small datasets treat it as a rough guide.
 
-## Latest key findings
+## Intermediary stage: key findings
 
 I added `RandomForestClassifier` / `RandomForestRegressor` (`src/random_forest.py`) on top of my
 bagging code, plus a Monte-Carlo bias-variance decomposition (`src/bias_variance.py`). A random
@@ -156,6 +160,107 @@ split credit between them and should not be read as a strict ranking.
 
 ![feature importance](results/feature_importance.png)
 
+## Final stage: key findings
+
+This stage uses the bootstrap for two kinds of uncertainty: how sure am I about a *reported metric*
+(`src/uncertainty.py`: percentile CIs, paired CIs for model differences), and how sure am I about
+a *single prediction* (prediction intervals from an ensemble). Benchmarks now use 5-fold
+cross-validated predictions on 6 datasets, with a bootstrap CI on every number.
+
+**1. A test metric is an estimate, not a fact.**
+The forest's accuracy on 171 Breast Cancer test points is 0.9766 with a 95% CI of
+**[0.9532, 0.9942]** (bootstrap SE 0.0114, analytic SE 0.0116). On Diabetes the RMSE of 59.3 has a CI
+of [53.4, 65.0] and R² = 0.388 has [0.245, 0.498]. Differences of half a percentage point, like several
+in the earlier stages, are well inside this noise.
+
+![bootstrap accuracy ci](results/bootstrap_accuracy_ci.png)
+
+**2. The bootstrap CI is only trustworthy with enough test data.**
+I checked it by simulation: draw many test sets from a pool of Digits predictions with known true accuracy
+(0.9666) and count how often the 95% CI contains it.
+
+| Test-set size | 20 | 50 | 100 | 200 | 500 |
+|---------------|----|----|-----|-----|-----|
+| Coverage (1,000 trials each) | 48.6% | 79.5% | 85.2% | 94.6% | 95.2% |
+
+It reaches the nominal 95% only around 200+ test points. At n = 20 a model with 96.7% accuracy gets every
+example right about half of the time, which gives a zero-width interval at 100% that misses the truth. That
+matches the 49% coverage. With high accuracy and a small test set, a percentile bootstrap CI is badly
+over-confident.
+
+![ci coverage](results/ci_coverage.png)
+
+**3. Benchmarks with confidence intervals (5-fold CV, 100 trees, accuracy [95% CI]).**
+
+| Dataset | Single tree | Bagging (ours) | RF (ours) | RF (sklearn) |
+|---------|-------------|----------------|-----------|--------------|
+| iris (n=150) | 0.960 [0.927, 0.987] | 0.953 [0.913, 0.980] | 0.947 [0.907, 0.980] | 0.947 [0.907, 0.980] |
+| wine (n=178) | 0.910 [0.865, 0.949] | 0.955 [0.921, 0.983] | 0.972 [0.944, 0.994] | 0.989 [0.972, 1.000] |
+| breast cancer (n=569) | 0.926 [0.903, 0.947] | 0.965 [0.949, 0.979] | 0.968 [0.954, 0.982] | 0.963 [0.947, 0.979] |
+| digits (n=1797) | 0.851 [0.835, 0.868] | 0.949 [0.939, 0.959] | 0.977 [0.971, 0.984] | 0.975 [0.968, 0.982] |
+
+| Dataset (RMSE, lower is better) | Single tree | Bagging (ours) | RF (ours) | RF (sklearn) |
+|---------|-------------|----------------|-----------|--------------|
+| diabetes (n=442) | 80.9 [75.3, 86.7] | 60.2 [56.3, 64.1] | 58.1 [54.5, 61.7] | 58.4 [54.7, 61.9] |
+| friedman1 (n=1000) | 3.16 [3.01, 3.32] | 2.01 [1.93, 2.10] | 2.08 [1.98, 2.17] | 2.09 [1.99, 2.18] |
+
+Reading these with paired bootstrap CIs on the *difference* (same resamples for both models):
+- **Ensembles beat a single tree** on every dataset except iris, where the single tree's 0.960 is within noise of the rest.
+- **Random forest vs bagging** is significant on only three datasets: RF is better on Digits (+2.84 points, CI [+1.95, +3.78])
+  and Diabetes (RMSE -2.10, CI [-3.34, -0.79]), while **bagging is better on Friedman #1** (RMSE +0.064 for RF,
+  CI [+0.017, +0.117]), consistent with the intermediary-stage bias-variance result. On iris, wine and breast cancer the CI includes 0.
+- **Ours vs scikit-learn:** no paired CI excludes 0 for either bagging or random forest on any of the six datasets
+  (a few sit right at the boundary), so the implementations are statistically indistinguishable here. With 100 trees
+  on iris and wine the two even make identical predictions; with 3-10 trees they differ, so this is convergence, not a bug.
+
+![classification benchmark](results/benchmark_classification_ci.png)
+![regression benchmark](results/benchmark_regression_ci.png)
+
+**4. Prediction intervals: spread of the trees vs OOB residuals (95% nominal).**
+Two ways to turn a forest into an interval for one prediction: the 2.5-97.5 percentiles of the individual trees'
+predictions ("tree spread"), or the forest prediction plus quantiles of the out-of-bag residuals.
+
+| Dataset | Tree spread: coverage / width | OOB residuals: coverage / width |
+|---------|-------------------------------|---------------------------------|
+| diabetes (20 splits) | 93.4% / 201.8 | 95.1% / 213.9 |
+| friedman1 (20 splits) | 98.5% / 12.7 | 94.4% / 8.1 |
+
+A noise sweep on Friedman #1 (500 train / 1,000 test points) shows the pattern:
+
+| Noise sigma | 0.5 | 1 | 2 | 4 | 8 |
+|-------------|-----|---|---|---|---|
+| Tree spread coverage (width) | 97.9% (12.4) | 97.9% (12.8) | 97.0% (14.5) | 96.1% (20.3) | 93.7% (33.5) |
+| OOB residuals coverage (width) | 95.6% (8.4) | 96.0% (9.1) | 94.3% (11.2) | 95.4% (18.6) | 96.2% (35.7) |
+
+The OOB-residual interval stays within about 94-96% at every noise level. The tree-spread interval is not
+designed to be a prediction interval, but it ends up roughly calibrated because unpruned trees memorise the
+noise. It is conservative when noise is low (about 48% wider at sigma = 0.5) and starts to under-cover at the
+highest noise and on Diabetes. I expected tree spread to under-cover everywhere; the data showed otherwise.
+
+![prediction intervals](results/prediction_intervals.png)
+![interval coverage](results/interval_coverage.png)
+
+**5. Bonus: bootstrap vs pasting vs Bayesian bootstrap (5-fold CV accuracy).**
+
+| Scheme | iris | wine | breast cancer | digits |
+|--------|------|------|---------------|--------|
+| Bootstrap (with replacement) | 0.953 | 0.955 | 0.965 | 0.949 |
+| Pasting, 63.2% without replacement | 0.953 | 0.949 | 0.960 | 0.945 |
+| Pasting, 80% without replacement | 0.960 | 0.933 | 0.951 | 0.925 |
+| Bayesian bootstrap (Dirichlet weights) | 0.953 | 0.955 | 0.960 | 0.958 |
+
+Pasting at 63.2% is never significantly different from the bootstrap. Pasting at 80% is worse on Breast Cancer
+(-1.41 points, CI [-2.64, -0.17]) and Digits (-2.39 points, CI [-3.23, -1.50]); a plausible reason is that
+larger subsamples make the trees more alike, but I did not test that. The Bayesian bootstrap is significantly
+better than the ordinary bootstrap only on Digits (+0.89 points, CI [+0.22, +1.56]) and cannot give OOB
+estimates because every point is used in every tree.
+
+![sampling schemes](results/sampling_schemes.png)
+
+**Limitations.** Only percentile intervals are implemented (no BCa). Benchmarks use a single CV partition
+(seed 42), and CIs from pooled out-of-fold predictions ignore fold-to-fold model variation, so they are
+slightly optimistic. Titanic and California Housing were not used because they need a download.
+
 ## What I learned
 
 - The 63.2% / 36.8% split follows directly from the probability a point is never drawn.
@@ -164,6 +269,10 @@ split credit between them and should not be read as a strict ranking.
 - A single train/test split can mislead; repeated splits give a more honest comparison.
 - Bagging mainly attacks variance; random feature subsetting pushes variance down further but
   raises bias, so the best `max_features` depends on how many features are informative.
+- A test-set metric needs an error bar. Bootstrap CIs showed that many small differences I would otherwise
+  have reported as wins are noise, and a coverage simulation showed the CI itself fails for small test sets.
+- Pairing matters: a paired bootstrap on the difference detects gaps that two overlapping separate CIs hide.
+- My intuition about interval coverage was wrong, and the experiment corrected it. Measure, don't assume.
 - Random forest is not automatically better than bagging. It helped on Wine and slightly on
   Breast Cancer, and hurt on a synthetic problem with many irrelevant features at the default setting.
 
@@ -177,6 +286,14 @@ split credit between them and should not be read as a strict ranking.
 | `RandomForestClassifier` / `RandomForestRegressor` | `src/random_forest.py` | Bagging + random feature subsets, feature importances |
 | `bias_variance_decomposition` | `src/bias_variance.py` | Monte-Carlo bias² / variance / noise on synthetic data |
 | `tree_variance_experiment` | `src/variance_demo.py` | Single-tree variance study |
+| `bootstrap_mean_ci`, `bootstrap_ci`, `paired_bootstrap_diff_ci` | `src/uncertainty.py` | Percentile CIs for metrics and for model differences |
+| `coverage_experiment` | `src/uncertainty.py` | Simulation check of CI coverage |
+| `tree_spread_interval`, `oob_residual_interval` | `src/uncertainty.py` | Prediction intervals from an ensemble |
+| `BayesianBaggingClassifier` / `Regressor` | `src/bayesian_bagging.py` | Dirichlet-weighted bootstrap (bonus) |
+| `cv_predict` | `src/benchmark.py` | Out-of-fold predictions for benchmarking |
+| `accuracy`, `rmse`, `r2`, ... | `src/metrics.py` | NumPy metrics |
+| `kfold_indices` | `utils/data_loader.py` | Stratified k-fold splits |
 | `load_dataset` | `utils/data_loader.py` | Load a CSV from `data/` |
 | `tests/test_bagging.py` | `tests/` | 16 tests incl. comparison with scikit-learn |
 | `tests/test_random_forest.py` | `tests/` | 13 tests incl. decomposition identity and variance reduction |
+| `tests/test_uncertainty.py` | `tests/` | 19 tests incl. CI coverage, paired CIs, prediction intervals, k-fold |

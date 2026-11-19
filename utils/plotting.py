@@ -200,3 +200,102 @@ def plot_feature_importance(names, importances, path, top=10):
     ax.set_xlabel("Mean importance across trees")
     ax.set_title(f"Random forest: top {top} features (Breast Cancer)")
     return _save(fig, path)
+
+
+# ----------------------------- Day 4 plots -----------------------------
+
+def plot_bootstrap_distribution(boot_vals, estimate, lo, hi, path, xlabel="Accuracy",
+                                title=""):
+    """Histogram of a bootstrapped statistic with its 95% percentile interval."""
+    fig, ax = plt.subplots(figsize=(7.2, 4.5))
+    ax.hist(boot_vals, bins=30, color="#4a90d9", edgecolor="white")
+    ax.axvspan(lo, hi, color="#5cb85c", alpha=0.2, label=f"95% CI [{lo:.3f}, {hi:.3f}]")
+    ax.axvline(estimate, color="crimson", lw=2, label=f"Observed = {estimate:.3f}")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Bootstrap replicates")
+    ax.set_title(title, fontsize=11)
+    ax.legend()
+    return _save(fig, path)
+
+
+def plot_ci_coverage(sizes, coverages, nominal, path, n_trials):
+    """Empirical coverage of the bootstrap CI vs test-set size."""
+    fig, ax = plt.subplots(figsize=(7.2, 4.5))
+    ax.plot(range(len(sizes)), coverages, "o-", color="#4a90d9", label="Bootstrap CI")
+    ax.axhline(nominal, color="crimson", ls="--", label=f"Nominal {nominal:.0%}")
+    ax.set_xticks(range(len(sizes)))
+    ax.set_xticklabels([str(s) for s in sizes])
+    ax.set_ylim(min(0.8, min(coverages) - 0.02), 1.0)
+    ax.set_xlabel("Test-set size n")
+    ax.set_ylabel("Fraction of CIs containing the true accuracy")
+    ax.set_title(f"Bootstrap CI coverage ({n_trials} simulated test sets per size)", fontsize=11)
+    ax.legend()
+    return _save(fig, path)
+
+
+def plot_ci_forest(panels, path, xlabel="Accuracy", suptitle=""):
+    """Dot-and-whisker plot. panels = {title: {model: (estimate, lo, hi)}}."""
+    n = len(panels)
+    ncols = 2 if n > 1 else 1
+    nrows = int(np.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.6 * ncols, 2.6 * nrows + 0.6),
+                             squeeze=False)
+    palette = ["#d9534f", "#4a90d9", "#5cb85c", "#9b59b6", "#e08e0b"]
+    for ax, (title, models) in zip(axes.ravel(), panels.items()):
+        names = list(models)
+        for i, name in enumerate(names):
+            est, lo, hi = models[name]
+            ax.errorbar(est, i, xerr=[[est - lo], [hi - est]], fmt="o", capsize=4,
+                        color=palette[i % len(palette)])
+        ax.set_yticks(range(len(names)))
+        ax.set_yticklabels(names, fontsize=8)
+        ax.invert_yaxis()
+        ax.set_title(title, fontsize=10)
+        ax.set_xlabel(xlabel, fontsize=9)
+    for ax in axes.ravel()[n:]:
+        ax.axis("off")
+    fig.suptitle(suptitle, fontsize=11)
+    return _save(fig, path)
+
+
+def plot_interval_example(y_true, pred, lows, highs, titles, path, n_show=60):
+    """Compare prediction intervals on the same test points (sorted by prediction)."""
+    order = np.argsort(pred)[:: max(1, len(pred) // n_show)][:n_show]
+    fig, axes = plt.subplots(1, len(lows), figsize=(6.2 * len(lows), 4.6), sharey=True)
+    axes = np.atleast_1d(axes)
+    xs = np.arange(len(order))
+    for ax, lo, hi, title in zip(axes, lows, highs, titles):
+        covered = (y_true[order] >= lo[order]) & (y_true[order] <= hi[order])
+        ax.fill_between(xs, lo[order], hi[order], color="#4a90d9", alpha=0.25,
+                        label="95% interval")
+        ax.plot(xs, pred[order], color="#4a90d9", lw=1)
+        ax.scatter(xs[covered], y_true[order][covered], s=18, color="black", label="Actual (inside)")
+        ax.scatter(xs[~covered], y_true[order][~covered], s=26, color="crimson",
+                   label="Actual (outside)")
+        ax.set_title(f"{title}\n{covered.mean():.0%} of these points covered", fontsize=10)
+        ax.set_xlabel("Test points (sorted by prediction)")
+    axes[0].set_ylabel("y")
+    axes[0].legend(fontsize=8, loc="upper left")
+    return _save(fig, path)
+
+
+def plot_interval_coverage(datasets, series, nominal, path):
+    """Grouped bars of empirical coverage. series = {method: [coverage per dataset]}."""
+    names = list(series)
+    x = np.arange(len(datasets))
+    w = 0.8 / len(names)
+    colors = ["#d9534f", "#4a90d9", "#5cb85c"]
+    fig, ax = plt.subplots(figsize=(7.2, 4.6))
+    for i, name in enumerate(names):
+        pos = x + (i - (len(names) - 1) / 2) * w
+        ax.bar(pos, series[name], w, label=name, color=colors[i % 3], edgecolor="white")
+        for p, v in zip(pos, series[name]):
+            ax.text(p, v + 0.01, f"{v:.0%}", ha="center", fontsize=9)
+    ax.axhline(nominal, color="black", ls="--", label=f"Nominal {nominal:.0%}")
+    ax.set_xticks(x)
+    ax.set_xticklabels(datasets)
+    ax.set_ylim(0, 1.1)
+    ax.set_ylabel("Empirical coverage on test data")
+    ax.set_title("Prediction-interval coverage (mean over 20 splits)", fontsize=11)
+    ax.legend(loc="lower right", fontsize=8)
+    return _save(fig, path)

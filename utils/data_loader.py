@@ -41,3 +41,24 @@ def train_test_split_np(X, y, test_size=0.3, seed=42, stratify=True):
     mask = np.zeros(n, dtype=bool)
     mask[test_idx] = True
     return X[~mask], X[mask], y[~mask], y[mask]
+
+
+def kfold_indices(n, k=5, seed=0, y=None):
+    """K-fold split as a list of (train_idx, test_idx).
+
+    If y is given, folds are stratified: each class is spread evenly over the folds.
+    Every sample appears in exactly one test fold.
+    """
+    rng = np.random.default_rng(seed)
+    fold_of = np.empty(n, dtype=int)
+    if y is None:
+        fold_of[rng.permutation(n)] = np.arange(n) % k
+    else:
+        y = np.asarray(y)
+        offset = 0
+        for cls in np.unique(y):
+            idx = np.where(y == cls)[0]
+            rng.shuffle(idx)
+            fold_of[idx] = (np.arange(len(idx)) + offset) % k
+            offset += len(idx)
+    return [(np.where(fold_of != f)[0], np.where(fold_of == f)[0]) for f in range(k)]

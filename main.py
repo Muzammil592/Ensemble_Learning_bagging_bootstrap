@@ -7,12 +7,16 @@ Sections 1-3: bootstrap fundamentals and single-tree variance.
 Sections 4-7: bagging from scratch, OOB error, error curves, regression.
 Sections 8-12: random forest, bias-variance decomposition, max_features sweep,
                bagging vs random forest error curves, OOB vs test, feature importance.
+Sections 13-17: bootstrap confidence intervals, CI coverage check, cross-validated
+               benchmarks with CIs, prediction intervals, bootstrap vs pasting vs Bayesian.
 """
 from pathlib import Path
 
 import numpy as np
 from sklearn.ensemble import BaggingClassifier as SkBaggingClassifier
 from sklearn.ensemble import RandomForestClassifier as SkRandomForestClassifier
+from sklearn.ensemble import BaggingRegressor as SkBaggingRegressor
+from sklearn.ensemble import RandomForestRegressor as SkRandomForestRegressor
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from src import (
@@ -20,7 +24,20 @@ from src import (
     BaggingRegressor,
     RandomForestClassifier,
     RandomForestRegressor,
+    BayesianBaggingClassifier,
     bias_variance_decomposition,
+    make_friedman_data,
+    accuracy,
+    rmse,
+    r2,
+    bootstrap_mean_ci,
+    bootstrap_ci,
+    paired_bootstrap_diff_ci,
+    coverage_experiment,
+    tree_spread_interval,
+    oob_residual_interval,
+    interval_coverage,
+    cv_predict,
     bootstrap_sample,
     oob_indices,
     unique_fraction,
@@ -42,6 +59,11 @@ from utils import (
     plot_max_features_sweep,
     plot_error_curves,
     plot_feature_importance,
+    plot_bootstrap_distribution,
+    plot_ci_coverage,
+    plot_ci_forest,
+    plot_interval_example,
+    plot_interval_coverage,
 )
 
 SEED = 42
@@ -50,6 +72,169 @@ RESULTS = Path(__file__).parent / "results"
 
 def section(title):
     print(f"\n{'=' * 60}\n{title}\n{'=' * 60}")
+
+
+def run_day4():
+    """Day 4: bootstrap for uncertainty, cross-validated benchmarks, sampling schemes."""
+
+    # ------------------------------------------------------------------
+    section("13. Bootstrap confidence intervals for test metrics")
+    Xc, yc, _ = load_dataset("breast_cancer")
+    Xtr, Xte, ytr, yte = train_test_split_np(Xc, yc, test_size=0.3, seed=SEED)
+    rf = RandomForestClassifier(n_estimators=200, random_state=SEED).fit(Xtr, ytr)
+    correct = (rf.predict(Xte) == yte).astype(float)
+    ci = bootstrap_mean_ci(correct, n_boot=5000, rng=SEED)
+    p, n_te = ci["estimate"], len(yte)
+    print(f"  Breast Cancer RF accuracy on {n_te} test points: {p:.4f}")
+    print(f"  95% bootstrap CI: [{ci['lo']:.4f}, {ci['hi']:.4f}]   (bootstrap SE = {ci['se']:.4f})")
+    print(f"  Analytic SE sqrt(p(1-p)/n) for comparison: {np.sqrt(p * (1 - p) / n_te):.4f}")
+    plot_bootstrap_distribution(ci["boot"], p, ci["lo"], ci["hi"],
+                                RESULTS / "bootstrap_accuracy_ci.png",
+                                title=f"Bootstrap distribution of test accuracy (n = {n_te})")
+
+    Xr, yr, _ = load_dataset("diabetes")
+    Xr_tr, Xr_te, yr_tr, yr_te = train_test_split_np(Xr, yr, test_size=0.3, seed=SEED, stratify=False)
+    rfr = RandomForestRegressor(n_estimators=200, random_state=SEED).fit(Xr_tr, yr_tr)
+    pr = rfr.predict(Xr_te)
+    for name, fn in (("RMSE", rmse), ("R^2", r2)):
+        c = bootstrap_ci(yr_te, pr, fn, n_boot=2000, rng=SEED)
+        print(f"  Diabetes RF {name} on {len(yr_te)} test points: {c['estimate']:.3f}  "
+              f"95% CI [{c['lo']:.3f}, {c['hi']:.3f}]")
+
+    # ------------------------------------------------------------------
+    section("14. Do the 95% intervals really contain the truth 95% of the time?")
+    Xd, yd, _ = load_dataset("digits")
+    Xd_tr, Xd_pool, yd_tr, yd_pool = train_test_split_np(Xd, yd, test_size=0.7, seed=SEED)
+    rf_d = RandomForestClassifier(n_estimators=100, random_state=SEED).fit(Xd_tr, yd_tr)
+    pool_correct = (rf_d.predict(Xd_pool) == yd_pool).astype(float)
+    sizes = [20, 50, 100, 200, 500]
+    truth, cov = coverage_experiment(pool_correct, sizes, n_trials=1000, n_boot=1000, seed=SEED)
+    print(f"  True accuracy of the fixed model on the pool ({len(pool_correct)} digits): {truth:.4f}")
+    for n_ in sizes:
+        print(f"  test size n={n_:<4d} coverage = {cov[n_]:.3f}  (nominal 0.950)")
+    plot_ci_coverage(sizes, [cov[n_] for n_ in sizes], 0.95, RESULTS / "ci_coverage.png", 1000)
+
+    # ------------------------------------------------------------------
+    section("15. Benchmarks: 5-fold CV predictions + bootstrap CIs")
+    cls_models = {
+        "Single tree": lambda s_: DecisionTreeClassifier(random_state=s_),
+        "Bagging (ours)": lambda s_: BaggingClassifier(n_estimators=100, voting="soft", random_state=s_),
+        "RF (ours)": lambda s_: RandomForestClassifier(n_estimators=100, random_state=s_),
+        "Bagging (sklearn)": lambda s_: SkBaggingClassifier(DecisionTreeClassifier(), n_estimators=100, random_state=s_),
+        "RF (sklearn)": lambda s_: SkRandomForestClassifier(n_estimators=100, random_state=s_),
+    }
+    reg_models = {
+        "Single tree": lambda s_: DecisionTreeRegressor(random_state=s_),
+        "Bagging (ours)": lambda s_: BaggingRegressor(n_estimators=100, random_state=s_),
+        "RF (ours)": lambda s_: RandomForestRegressor(n_estimators=100, random_state=s_),
+        "Bagging (sklearn)": lambda s_: SkBaggingRegressor(n_estimators=100, random_state=s_),
+        "RF (sklearn)": lambda s_: SkRandomForestRegressor(n_estimators=100, max_features=1 / 3, random_state=s_),
+    }
+    comparisons = [("RF (ours)", "Bagging (ours)"), ("RF (ours)", "RF (sklearn)"),
+                   ("Bagging (ours)", "Bagging (sklearn)")]
+
+    cls_panels = {}
+    for ds in ["iris", "wine", "breast_cancer", "digits"]:
+        Xb, yb, _ = load_dataset(ds)
+        preds = {name: cv_predict(f, Xb, yb, k=5, seed=SEED) for name, f in cls_models.items()}
+        print(f"  [{ds}]  n={len(yb)}  (accuracy, 95% CI)")
+        cls_panels[f"{ds} (n={len(yb)})"] = {}
+        for name, pr_ in preds.items():
+            c = bootstrap_mean_ci((pr_ == yb).astype(float), n_boot=2000, rng=SEED)
+            cls_panels[f"{ds} (n={len(yb)})"][name] = (c["estimate"], c["lo"], c["hi"])
+            print(f"    {name:<19s} {c['estimate']:.4f}  [{c['lo']:.4f}, {c['hi']:.4f}]")
+        for a, b in comparisons:
+            d = paired_bootstrap_diff_ci(yb, preds[a], preds[b], accuracy, n_boot=2000, rng=SEED)
+            flag = "excludes 0" if d["excludes_zero"] else "includes 0"
+            print(f"      paired diff {a} - {b}: {d['estimate']:+.4f}  [{d['lo']:+.4f}, {d['hi']:+.4f}]  ({flag})")
+    plot_ci_forest(cls_panels, RESULTS / "benchmark_classification_ci.png",
+                   xlabel="5-fold CV accuracy (95% bootstrap CI)",
+                   suptitle="Classification benchmark")
+
+    reg_panels = {}
+    for ds in ["diabetes", "friedman1"]:
+        Xb, yb, _ = load_dataset(ds)
+        preds = {name: cv_predict(f, Xb, yb, k=5, seed=SEED, stratified=False)
+                 for name, f in reg_models.items()}
+        print(f"  [{ds}]  n={len(yb)}  (RMSE, 95% CI; lower is better)")
+        reg_panels[f"{ds} (n={len(yb)})"] = {}
+        for name, pr_ in preds.items():
+            c = bootstrap_ci(yb, pr_, rmse, n_boot=1000, rng=SEED)
+            reg_panels[f"{ds} (n={len(yb)})"][name] = (c["estimate"], c["lo"], c["hi"])
+            print(f"    {name:<19s} {c['estimate']:.3f}  [{c['lo']:.3f}, {c['hi']:.3f}]")
+        for a, b in comparisons:
+            d = paired_bootstrap_diff_ci(yb, preds[a], preds[b], rmse, n_boot=1000, rng=SEED)
+            flag = "excludes 0" if d["excludes_zero"] else "includes 0"
+            print(f"      paired diff {a} - {b}: {d['estimate']:+.3f}  [{d['lo']:+.3f}, {d['hi']:+.3f}]  ({flag})")
+    plot_ci_forest(reg_panels, RESULTS / "benchmark_regression_ci.png",
+                   xlabel="5-fold CV RMSE (95% bootstrap CI, lower is better)",
+                   suptitle="Regression benchmark")
+
+    # ------------------------------------------------------------------
+    section("16. Prediction intervals from an ensemble (95% nominal)")
+    cov_spread, cov_oob, w_spread, w_oob = {}, {}, {}, {}
+    for ds in ["diabetes", "friedman1"]:
+        Xb, yb, _ = load_dataset(ds)
+        cs, co, ws, wo = [], [], [], []
+        for sd in range(20):
+            Xtr, Xte, ytr, yte = train_test_split_np(Xb, yb, test_size=0.3, seed=sd, stratify=False)
+            m = RandomForestRegressor(n_estimators=200, oob_score=True, random_state=sd).fit(Xtr, ytr)
+            c1, w1 = interval_coverage(yte, *tree_spread_interval(m, Xte))
+            c2, w2 = interval_coverage(yte, *oob_residual_interval(m, Xte, ytr))
+            cs.append(c1); ws.append(w1); co.append(c2); wo.append(w2)
+        cov_spread[ds], cov_oob[ds], w_spread[ds], w_oob[ds] = map(np.mean, (cs, co, ws, wo))
+        print(f"  [{ds}] tree-spread: coverage={cov_spread[ds]:.3f} width={w_spread[ds]:.1f} | "
+              f"OOB-residual: coverage={cov_oob[ds]:.3f} width={w_oob[ds]:.1f}")
+    plot_interval_coverage(["diabetes", "friedman1"],
+                           {"Tree spread": [cov_spread[d] for d in ("diabetes", "friedman1")],
+                            "OOB residuals": [cov_oob[d] for d in ("diabetes", "friedman1")]},
+                           0.95, RESULTS / "interval_coverage.png")
+
+    print("  Noise sweep on Friedman #1 (500 train / 1000 test points):")
+    for noise in (0.5, 1, 2, 4, 8):
+        Xtr, ytr = make_friedman_data(500, rng=10, noise=noise)
+        Xte, yte = make_friedman_data(1000, rng=11, noise=noise)
+        m = RandomForestRegressor(n_estimators=100, oob_score=True, random_state=SEED).fit(Xtr, ytr)
+        c1, w1 = interval_coverage(yte, *tree_spread_interval(m, Xte))
+        c2, w2 = interval_coverage(yte, *oob_residual_interval(m, Xte, ytr))
+        print(f"    noise={noise:<4} tree-spread cov={c1:.3f} w={w1:5.1f} | OOB-residual cov={c2:.3f} w={w2:5.1f}")
+
+    Xf, yf, _ = load_dataset("friedman1")
+    Xtr, Xte, ytr, yte = train_test_split_np(Xf, yf, test_size=0.3, seed=0, stratify=False)
+    m = RandomForestRegressor(n_estimators=200, oob_score=True, random_state=0).fit(Xtr, ytr)
+    lo1, hi1 = tree_spread_interval(m, Xte)
+    lo2, hi2 = oob_residual_interval(m, Xte, ytr)
+    plot_interval_example(yte, m.predict(Xte), [lo1, lo2], [hi1, hi2],
+                          ["Tree-spread interval", "OOB-residual interval"],
+                          RESULTS / "prediction_intervals.png")
+
+    # ------------------------------------------------------------------
+    section("17. Bonus: bootstrap vs pasting vs Bayesian bootstrap (5-fold CV)")
+    schemes = {
+        "Bootstrap": lambda s_: BaggingClassifier(n_estimators=100, voting="soft", random_state=s_),
+        "Pasting 63.2%": lambda s_: BaggingClassifier(n_estimators=100, voting="soft", bootstrap=False, max_samples=0.632, random_state=s_),
+        "Pasting 80%": lambda s_: BaggingClassifier(n_estimators=100, voting="soft", bootstrap=False, max_samples=0.8, random_state=s_),
+        "Bayesian bootstrap": lambda s_: BayesianBaggingClassifier(n_estimators=100, voting="soft", random_state=s_),
+    }
+    ds_list = ["iris", "wine", "breast_cancer", "digits"]
+    means = {k: [] for k in schemes}
+    ses = {k: [] for k in schemes}
+    for ds in ds_list:
+        Xb, yb, _ = load_dataset(ds)
+        preds = {k: cv_predict(f, Xb, yb, k=5, seed=SEED) for k, f in schemes.items()}
+        print(f"  [{ds}]")
+        for k, pr_ in preds.items():
+            c = bootstrap_mean_ci((pr_ == yb).astype(float), n_boot=2000, rng=SEED)
+            means[k].append(c["estimate"]); ses[k].append(c["se"])
+            line = f"    {k:<19s} {c['estimate']:.4f}  [{c['lo']:.4f}, {c['hi']:.4f}]"
+            if k != "Bootstrap":
+                d = paired_bootstrap_diff_ci(yb, pr_, preds["Bootstrap"], accuracy, n_boot=1000, rng=SEED)
+                line += f"   vs bootstrap: {d['estimate']:+.4f} [{d['lo']:+.4f}, {d['hi']:+.4f}]"
+            print(line)
+    plot_grouped_bars(["iris", "wine", "breast cancer", "digits"],
+                      {k: (means[k], ses[k]) for k in schemes},
+                      RESULTS / "sampling_schemes.png", ylabel="5-fold CV accuracy",
+                      title="Sampling schemes for the ensemble (bars: bootstrap SE)")
 
 
 def main():
@@ -237,9 +422,11 @@ def main():
     print("  Top 5 features: " + ", ".join(f"{feat_names[i]} ({imp[i]:.3f})" for i in top))
     plot_feature_importance(feat_names, imp, RESULTS / "feature_importance.png")
 
+    run_day4()
+
     section("Done")
     print(f"Figures saved in: {RESULTS}/")
-    print("Next (Day 4): bootstrap confidence intervals + benchmarks.")
+    print("Next (Day 5): polish, CI workflow, final write-up.")
 
 
 if __name__ == "__main__":
