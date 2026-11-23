@@ -1,4 +1,4 @@
-"""Day 4 unit tests. Run with:  pytest -q   (from the project root)."""
+"""Unit tests for confidence intervals, prediction intervals, k-fold and Bayesian bagging. Run with:  pytest -q   (from the project root)."""
 import sys
 from pathlib import Path
 

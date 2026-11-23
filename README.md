@@ -1,39 +1,86 @@
-# Bootstrap Ensembles from Scratch
+# Bootstrap and Bagging Ensembles
 
-Building bagging and random forests from scratch with NumPy, then studying *why*
-bootstrapping reduces variance. The project is built in three stages; progress is tracked below.
+Bagging and random forests implemented **from scratch in NumPy**, plus experiments on *why* bootstrapping
+reduces variance and *how much to trust* the results. Only the base decision tree comes from scikit-learn;
+the bootstrap resampling, voting, out-of-bag (OOB) estimation, random-forest logic, bias-variance analysis,
+confidence intervals and prediction intervals are my own code, checked against scikit-learn with 48 unit tests.
+
+## Headline results
+
+- **My implementations match scikit-learn.** Accuracy is within 0.003 on Breast Cancer and Wine (20 splits),
+  and across six datasets in 5-fold CV no paired bootstrap CI for ours-vs-scikit-learn excludes zero.
+- **Bagging removes most of a tree's variance.** On a synthetic problem with a known true function, variance
+  fell 85% (8.94 to 1.37) while bias² rose only from 3.50 to 4.29.
+- **Random forest is not automatically better than bagging.** With 3 of 10 features per split on that problem
+  its total error was *higher* (6.76 vs 5.66). On Digits it won clearly (+2.8 accuracy points).
+- **Test metrics need error bars.** 97.7% accuracy on 171 test points has a 95% CI of [95.3%, 99.4%]. The
+  bootstrap CI itself covered the truth only 49% of the time at n=20 and reached ~95% by n=200.
+- **OOB residual intervals are well calibrated.** Their coverage stayed at 94-96% across noise levels, and
+  they were up to 36% narrower than the spread across trees.
+
+<p align="center">
+  <img src="results/bias_variance.png" width="48%" alt="Bias-variance decomposition">
+  <img src="results/ci_coverage.png" width="48%" alt="Bootstrap CI coverage vs test-set size">
+</p>
+
+## Quick start
+
+```bash
+git clone https://github.com/Muzammil592/Ensemble_Learning_bagging_bootstrap.git
+cd bootstrap-ensembles
+pip install -r requirements.txt
+
+python main.py     # all experiments: prints results, writes figures to results/ (about 3 minutes)
+pytest -q          # 48 unit tests
+```
+
+For a fast guided tour (about 10 seconds of compute), open the demo notebook:
+
+```bash
+pip install jupyter
+jupyter notebook notebooks/demo.ipynb
+```
 
 ## Project structure
 
 ```
 bootstrap-ensembles/
-├── main.py            # entry point: python main.py
-├── data/              # CSV datasets (iris, wine, breast_cancer, digits, diabetes, friedman1)
-├── src/               # bootstrap, bagging, random forest, bias-variance, CIs, intervals
-├── utils/             # data loading and plotting helpers
-├── tests/             # pytest unit tests
-├── results/           # generated figures
+├── main.py                  # entry point: runs every experiment
+├── data/                    # CSV datasets (iris, wine, breast_cancer, digits, diabetes, friedman1)
+├── src/
+│   ├── bootstrap.py         # resampling, OOB indices, the 63.2% rule
+│   ├── bagging.py           # BaggingClassifier / BaggingRegressor (voting, pasting, OOB)
+│   ├── random_forest.py     # random forests (bagging + random feature subsets)
+│   ├── bias_variance.py     # Monte-Carlo bias-variance decomposition
+│   ├── uncertainty.py       # bootstrap CIs, paired CIs, prediction intervals
+│   ├── bayesian_bagging.py  # Dirichlet-weighted bootstrap (bonus)
+│   ├── benchmark.py         # cross-validated out-of-fold predictions
+│   ├── metrics.py           # accuracy, RMSE, R^2, ...
+│   └── variance_demo.py     # single-tree instability study
+├── utils/                   # data loading, k-fold, plotting helpers
+├── tests/                   # 48 pytest unit tests
+├── notebooks/demo.ipynb     # short guided demo with outputs
+├── docs/                    # LinkedIn post and blog post drafts
+├── results/                 # generated figures
+├── .github/workflows/       # CI: runs the tests on every push
 └── requirements.txt
 ```
 
-## Quick start
+## What is from scratch, and what is borrowed
 
-```bash
-pip install -r requirements.txt
-python main.py        # runs all experiments, saves figures to results/
-pytest -q             # runs the unit tests
-```
+| From scratch (this repo) | Borrowed |
+|--------------------------|----------|
+| Bootstrap and pasting resampling, OOB bookkeeping | Base decision trees (`sklearn.tree`), including the per-split random feature draw (`max_features`) |
+| Hard/soft voting, averaging, staged predictions | scikit-learn bagging / random forest, used only as baselines |
+| Random-forest wrapper, feature importances | pandas for CSV loading, matplotlib for plots |
+| Bias-variance decomposition, percentile and paired bootstrap CIs | |
+| OOB-residual and tree-spread prediction intervals, Bayesian bootstrap, k-fold | |
 
-## Progress
+## Experiments in detail
 
-- [x] **Initial stage:** bootstrap fundamentals, bagging from scratch and out-of-bag error
-- [x] **Intermediary stage:** random forest and bias-variance analysis
-- [x] **Final stage:** bootstrap confidence intervals, prediction intervals and benchmarks
-- [ ] Planned: polish, CI workflow and final write-up
+### Initial stage: key findings
 
-## Initial stage: key findings
-
-### Bootstrap fundamentals
+#### Bootstrap fundamentals
 
 **1. A bootstrap sample contains ~63.2% of the original points.**
 Each point is missed with probability (1 - 1/n)^n -> 1/e ≈ 0.368. Simulations
@@ -49,7 +96,7 @@ set had test accuracy from **0.877 to 0.971** (std 0.019), and disagreed on
 
 ![tree variance](results/tree_variance.png)
 
-### Bagging from scratch
+#### Bagging from scratch
 
 I implemented `BaggingClassifier` and `BaggingRegressor` in `src/bagging.py`. Only the base
 tree comes from scikit-learn; resampling, hard/soft voting, averaging, OOB estimation and
@@ -87,7 +134,7 @@ single split is noisy; the 20-split average above is the fair comparison.
 A single tree overfits badly (test R² = -0.383); bagging reaches R² = 0.386, with OOB R² = 0.475.
 The OOB estimate is optimistic here, so on small datasets treat it as a rough guide.
 
-## Intermediary stage: key findings
+### Intermediary stage: key findings
 
 I added `RandomForestClassifier` / `RandomForestRegressor` (`src/random_forest.py`) on top of my
 bagging code, plus a Monte-Carlo bias-variance decomposition (`src/bias_variance.py`). A random
@@ -160,7 +207,7 @@ split credit between them and should not be read as a strict ranking.
 
 ![feature importance](results/feature_importance.png)
 
-## Final stage: key findings
+### Final stage: key findings
 
 This stage uses the bootstrap for two kinds of uncertainty: how sure am I about a *reported metric*
 (`src/uncertainty.py`: percentile CIs, paired CIs for model differences), and how sure am I about
@@ -257,9 +304,13 @@ estimates because every point is used in every tree.
 
 ![sampling schemes](results/sampling_schemes.png)
 
-**Limitations.** Only percentile intervals are implemented (no BCa). Benchmarks use a single CV partition
-(seed 42), and CIs from pooled out-of-fold predictions ignore fold-to-fold model variation, so they are
-slightly optimistic. Titanic and California Housing were not used because they need a download.
+## Limitations
+
+- Only percentile bootstrap intervals are implemented (no BCa), and they are unreliable for small test sets when accuracy is high (see the coverage experiment).
+- Benchmarks use a single 5-fold CV partition (seed 42). CIs built from pooled out-of-fold predictions ignore fold-to-fold model variation, so they are slightly optimistic.
+- Datasets are small, bundled with scikit-learn, plus one synthetic set. Titanic and California Housing were not used because they need a download; to add a dataset, save it as `data/<name>.csv` with a `target` column and call `load_dataset("<name>")`.
+- Impurity-based feature importances split credit between correlated features and should not be read as a strict ranking.
+- The per-split feature subsampling inside random forests is performed by scikit-learn's tree, not by my own tree implementation.
 
 ## What I learned
 
@@ -274,9 +325,9 @@ slightly optimistic. Titanic and California Housing were not used because they n
 - Pairing matters: a paired bootstrap on the difference detects gaps that two overlapping separate CIs hide.
 - My intuition about interval coverage was wrong, and the experiment corrected it. Measure, don't assume.
 - Random forest is not automatically better than bagging. It helped on Wine and slightly on
-  Breast Cancer, and hurt on a synthetic problem with many irrelevant features at the default setting.
+  Breast Cancer, and hurt on a synthetic problem where half of the features are irrelevant, at the default setting.
 
-## Module reference
+## Code map
 
 | Item | Location | Purpose |
 |------|----------|---------|
@@ -297,3 +348,10 @@ slightly optimistic. Titanic and California Housing were not used because they n
 | `tests/test_bagging.py` | `tests/` | 16 tests incl. comparison with scikit-learn |
 | `tests/test_random_forest.py` | `tests/` | 13 tests incl. decomposition identity and variance reduction |
 | `tests/test_uncertainty.py` | `tests/` | 19 tests incl. CI coverage, paired CIs, prediction intervals, k-fold |
+
+## Reproducibility
+
+- Every experiment uses fixed seeds; rerunning `python main.py` reproduces the same printed numbers (I checked this by running the full pipeline twice and diffing the output).
+- Developed and run locally with Python 3.12.3, NumPy 2.5.4, pandas 3.0.6, scikit-learn 1.9.1 and matplotlib 3.11.2.
+- The CI workflow is configured for Python 3.10, 3.11 and 3.12; I could only run 3.12 locally.
+- The notebook's saved outputs were produced by executing its cells in a script harness rather than a live Jupyter kernel; re-running it in Jupyter will give the same code results.

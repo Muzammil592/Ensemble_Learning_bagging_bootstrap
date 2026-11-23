@@ -1,4 +1,4 @@
-"""Day 3 unit tests. Run with:  pytest -q   (from the project root)."""
+"""Unit tests for random forests and the bias-variance decomposition. Run with:  pytest -q   (from the project root)."""
 import sys
 from pathlib import Path
 

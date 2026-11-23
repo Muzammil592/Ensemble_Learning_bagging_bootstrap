@@ -60,6 +60,7 @@ class RandomForestRegressor(BaggingRegressor):
 
     @property
     def feature_importances_(self):
+        """Mean impurity-based importance over all trees (sums to 1)."""
         self._check_fitted()
         imp = np.mean([t.feature_importances_ for t in self.estimators_], axis=0)
         return imp / imp.sum()

@@ -71,11 +71,12 @@ RESULTS = Path(__file__).parent / "results"
 
 
 def section(title):
+    """Print a banner so each experiment is easy to find in the output."""
     print(f"\n{'=' * 60}\n{title}\n{'=' * 60}")
 
 
 def run_day4():
-    """Day 4: bootstrap for uncertainty, cross-validated benchmarks, sampling schemes."""
+    """Final stage: bootstrap uncertainty, cross-validated benchmarks, sampling schemes."""
 
     # ------------------------------------------------------------------
     section("13. Bootstrap confidence intervals for test metrics")
@@ -238,6 +239,7 @@ def run_day4():
 
 
 def main():
+    """Run every experiment in order and save the figures to results/."""
     X, y, _ = load_dataset("breast_cancer")
     X_train, X_test, y_train, y_test = train_test_split_np(X, y, test_size=0.3, seed=SEED)
     print(f"Dataset: breast_cancer | train={X_train.shape} test={X_test.shape}")
@@ -275,7 +277,7 @@ def main():
     plot_tree_variance(accs, out["full_acc"], RESULTS / "tree_variance.png")
 
     # ------------------------------------------------------------------
-    # Day 2: Bagging from scratch + out-of-bag error
+    # Initial stage (continued): bagging from scratch + out-of-bag error
     # ------------------------------------------------------------------
     section("4. Bagging vs single tree vs scikit-learn (20 random splits)")
     n_estimators, n_splits = 50, 20
@@ -329,7 +331,7 @@ def main():
     print(f"  Bagging OOB R^2:  {reg.oob_score_:.3f}  (OOB MSE = {reg.oob_mse_:.1f})")
 
     # ------------------------------------------------------------------
-    # Day 3: Random forest + bias-variance analysis
+    # Intermediary stage: random forest + bias-variance analysis
     # ------------------------------------------------------------------
     section("8. Single tree vs bagging vs random forest (20 splits, 100 trees)")
     datasets = ["breast_cancer", "wine"]
@@ -426,7 +428,7 @@ def main():
 
     section("Done")
     print(f"Figures saved in: {RESULTS}/")
-    print("Next (Day 5): polish, CI workflow, final write-up.")
+    print("All experiments finished. See README.md for the write-up.")
 
 
 if __name__ == "__main__":

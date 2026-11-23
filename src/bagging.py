@@ -78,6 +78,7 @@ class BaggingClassifier(_BaseBagging):
         return out
 
     def fit(self, X, y):
+        """Fit n_estimators trees on bootstrap (or pasted) samples; compute OOB estimates if requested."""
         X, y = self._validate(X, y)
         rng = np.random.default_rng(self.random_state)
         n = len(X)
@@ -122,14 +123,17 @@ class BaggingClassifier(_BaseBagging):
         return sum(self._scores(est, X) for est in self.estimators_)
 
     def predict(self, X):
+        """Predict class labels by aggregating the trees' votes."""
         scores = self._aggregate(X)          # raises if not fitted
         return self.classes_[scores.argmax(axis=1)]
 
     def predict_proba(self, X):
+        """Class probabilities: the normalised sum of per-tree scores."""
         total = self._aggregate(X)
         return total / total.sum(axis=1, keepdims=True)
 
     def score(self, X, y):
+        """Accuracy on (X, y)."""
         return float((self.predict(X) == np.asarray(y)).mean())
 
     def staged_predict(self, X):
@@ -149,6 +153,7 @@ class BaggingRegressor(_BaseBagging):
         return DecisionTreeRegressor()
 
     def fit(self, X, y):
+        """Fit n_estimators trees on bootstrap (or pasted) samples; compute OOB predictions if requested."""
         X, y = self._validate(X, y)
         y = y.astype(float)
         rng = np.random.default_rng(self.random_state)
@@ -189,6 +194,7 @@ class BaggingRegressor(_BaseBagging):
         return self
 
     def predict(self, X):
+        """Predict the mean of all trees' predictions."""
         self._check_fitted()
         X = np.asarray(X, dtype=float)
         return np.mean([est.predict(X) for est in self.estimators_], axis=0)
@@ -200,6 +206,7 @@ class BaggingRegressor(_BaseBagging):
         return float(1 - np.sum((y - pred) ** 2) / np.sum((y - y.mean()) ** 2))
 
     def staged_predict(self, X):
+        """Yield the ensemble prediction after 1, 2, ..., n_estimators trees."""
         self._check_fitted()
         X = np.asarray(X, dtype=float)
         total = np.zeros(len(X))

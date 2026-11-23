@@ -3,7 +3,10 @@ from pathlib import Path
 
 import matplotlib
 
-matplotlib.use("Agg")  # works without a display
+try:                      # inside Jupyter keep the inline backend so figures display
+    get_ipython  # noqa: F821
+except NameError:         # plain scripts / CI: render to files without a display
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -60,7 +63,7 @@ def plot_tree_variance(test_accs, full_acc, path):
     return _save(fig, path)
 
 
-# ----------------------------- Day 2 plots -----------------------------
+# ------------------------ bagging / OOB plots ------------------------
 
 def plot_error_vs_estimators(oob_curve, test_curve, single_tree_err, path,
                              ylabel="Error rate"):
@@ -113,7 +116,7 @@ def plot_model_comparison(names, means, stds, path, ylabel="Test accuracy"):
     return _save(fig, path)
 
 
-# ----------------------------- Day 3 plots -----------------------------
+# -------------- random forest / bias-variance plots --------------
 
 def plot_grouped_bars(group_labels, series, path, ylabel="Test accuracy", title=""):
     """Grouped bars. series = {name: (means, stds)}, one value per group."""
@@ -202,7 +205,7 @@ def plot_feature_importance(names, importances, path, top=10):
     return _save(fig, path)
 
 
-# ----------------------------- Day 4 plots -----------------------------
+# ---------------- uncertainty and benchmark plots ----------------
 
 def plot_bootstrap_distribution(boot_vals, estimate, lo, hi, path, xlabel="Accuracy",
                                 title=""):

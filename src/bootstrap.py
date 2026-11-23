@@ -3,7 +3,7 @@
 A bootstrap sample of size n is drawn *with replacement* from n original points.
 Each point has probability (1 - 1/n)^n -> 1/e ≈ 0.368 of never being drawn, so on
 average ~63.2% of the original points appear in a bootstrap sample. The ~36.8% left
-out are the "out-of-bag" (OOB) points, which Day 2 will use as a free validation set.
+out are the "out-of-bag" (OOB) points, which bagging uses as a free validation set.
 """
 import numpy as np
 

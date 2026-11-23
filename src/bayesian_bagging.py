@@ -17,12 +17,14 @@ def _dirichlet_weights(n, rng):
 
 
 class BayesianBaggingClassifier(BaggingClassifier):
+    """Bagging classifier whose members see ALL points, re-weighted by Dirichlet(1, ..., 1) draws."""
     def __init__(self, base_estimator=None, n_estimators=50, voting="hard", random_state=None):
         super().__init__(base_estimator=base_estimator, n_estimators=n_estimators,
                          max_samples=1.0, bootstrap=True, oob_score=False,
                          voting=voting, random_state=random_state)
 
     def fit(self, X, y):
+        """Fit each member on the full data with fresh Dirichlet sample weights."""
         X, y = self._validate(X, y)
         rng = np.random.default_rng(self.random_state)
         n = len(X)
@@ -39,12 +41,14 @@ class BayesianBaggingClassifier(BaggingClassifier):
 
 
 class BayesianBaggingRegressor(BaggingRegressor):
+    """Bagging regressor whose members see ALL points, re-weighted by Dirichlet(1, ..., 1) draws."""
     def __init__(self, base_estimator=None, n_estimators=50, random_state=None):
         super().__init__(base_estimator=base_estimator, n_estimators=n_estimators,
                          max_samples=1.0, bootstrap=True, oob_score=False,
                          random_state=random_state)
 
     def fit(self, X, y):
+        """Fit each member on the full data with fresh Dirichlet sample weights."""
         X, y = self._validate(X, y)
         y = y.astype(float)
         rng = np.random.default_rng(self.random_state)

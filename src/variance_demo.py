@@ -1,5 +1,5 @@
 """Show that a single decision tree has high variance, and that this is exactly
-what bagging (Day 2) will fix.
+what bagging fixes.
 
 We train many trees, each on a different bootstrap resample of the SAME training
 set, and look at how much their predictions disagree.
